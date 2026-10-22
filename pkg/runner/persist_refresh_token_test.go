@@ -31,9 +31,9 @@ func TestRunner_PersistRefreshTokenKeepsResolvedSecretsOutOfState(t *testing.T) 
 	setupPersistenceState(t)
 
 	const (
-		clientSecretReference = "client-secret-ref,target=oauth_secret"
+		clientSecretReference = "bws://12345678-1234-4234-8234-123456789abc,target=oauth_secret"
 		clientSecretValue     = "plaintext-client-secret"
-		bearerTokenReference  = "bearer-token-ref,target=bearer_token"
+		bearerTokenReference  = "bws://87654321-4321-4321-8321-cba987654321,target=bearer_token"
 		bearerTokenValue      = "plaintext-bearer-token"
 		refreshTokenName      = "OAUTH_REFRESH_TOKEN_refresh-persistence"
 	)
@@ -41,9 +41,10 @@ func TestRunner_PersistRefreshTokenKeepsResolvedSecretsOutOfState(t *testing.T) 
 	ctx := context.Background()
 	ctrl := gomock.NewController(t)
 	secretManager := secretsmocks.NewMockProvider(ctrl)
+	userProvider := secretsmocks.NewMockProvider(ctrl)
 	gomock.InOrder(
-		secretManager.EXPECT().GetSecret(ctx, "client-secret-ref").Return(clientSecretValue, nil),
-		secretManager.EXPECT().GetSecret(ctx, "bearer-token-ref").Return(bearerTokenValue, nil),
+		userProvider.EXPECT().GetSecret(ctx, "bws://12345678-1234-4234-8234-123456789abc").Return(clientSecretValue, nil),
+		userProvider.EXPECT().GetSecret(ctx, "bws://87654321-4321-4321-8321-cba987654321").Return(bearerTokenValue, nil),
 		secretManager.EXPECT().GetSecret(gomock.Any(), refreshTokenName).Return("", assert.AnError),
 		secretManager.EXPECT().Capabilities().Return(secrets.ProviderCapabilities{CanWrite: true}),
 		secretManager.EXPECT().SetSecret(ctx, refreshTokenName, "refresh-token-envelope").Return(nil),
@@ -58,7 +59,7 @@ func TestRunner_PersistRefreshTokenKeepsResolvedSecretsOutOfState(t *testing.T) 
 	runConfig.BaseName = "refresh-persistence"
 	runConfig.RemoteAuthConfig = remoteAuthConfig
 	require.NoError(t, runConfig.SaveState(ctx))
-	_, err := runConfig.WithSecrets(ctx, secretManager, secretManager)
+	_, err := runConfig.WithSecrets(ctx, secretManager, userProvider)
 	require.NoError(t, err)
 
 	runner := &Runner{Config: runConfig}
@@ -70,6 +71,7 @@ func TestRunner_PersistRefreshTokenKeepsResolvedSecretsOutOfState(t *testing.T) 
 	assert.Contains(t, rawState, bearerTokenReference)
 	assert.NotContains(t, rawState, clientSecretValue)
 	assert.NotContains(t, rawState, bearerTokenValue)
+	assert.NotContains(t, rawState, "refresh-token-envelope")
 
 	tokenSource, err := remote.NewHandler(runConfig.RemoteAuthConfig).Authenticate(ctx, "https://example.com/mcp")
 	require.NoError(t, err)

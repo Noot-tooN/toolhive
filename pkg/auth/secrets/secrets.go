@@ -219,12 +219,10 @@ func GetSystemSecretsProvider() (secrets.Provider, error) {
 func getSystemSecretsProviderFromConfig(configProvider config.Provider, envReader env.Reader) (secrets.Provider, error) {
 	cfg := configProvider.GetConfig()
 
-	// GetProviderTypeWithEnv handles the TOOLHIVE_SECRETS_PROVIDER env var and
-	// allows the "environment" provider even when SetupCompleted is false, so
-	// Kubernetes and test deployments can skip interactive setup. When no env
-	// var override is present and SetupCompleted is false, it returns
-	// ErrSecretsNotSetup, which is propagated directly to the caller.
-	providerType, err := cfg.Secrets.GetProviderTypeWithEnv(envReader)
+	// Explicit local system storage remains independent of user-provider env
+	// overrides. Without an explicit system provider, legacy environment-only
+	// deployments can still skip interactive setup.
+	providerType, err := cfg.Secrets.GetSystemProviderTypeWithEnv(envReader)
 	if err != nil {
 		if errors.Is(err, secrets.ErrSecretsNotSetup) {
 			return nil, secrets.ErrSecretsNotSetup
@@ -251,7 +249,7 @@ func GetSecretsManager() (secrets.Provider, error) {
 		return nil, secrets.ErrSecretsNotSetup
 	}
 
-	providerType, err := cfg.Secrets.GetProviderType()
+	providerType, err := cfg.Secrets.GetSystemProviderType()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secrets provider type: %w", err)
 	}

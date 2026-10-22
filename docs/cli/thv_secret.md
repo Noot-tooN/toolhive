@@ -36,6 +36,7 @@ Run "thv secret setup" first to configure a secrets provider before using any se
 ### SEE ALSO
 
 * [thv](thv.md)	 - ToolHive (thv) is a lightweight, secure, and fast manager for MCP servers
+* [thv secret bitwarden](thv_secret_bitwarden.md)	 - Manage the local Bitwarden access token
 * [thv secret delete](thv_secret_delete.md)	 - Delete a secret
 * [thv secret get](thv_secret_get.md)	 - Get a secret
 * [thv secret list](thv_secret_list.md)	 - List all available secrets

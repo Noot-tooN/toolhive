@@ -4,7 +4,6 @@
 package v1
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,6 +99,8 @@ func (s *SecretsRoutes) setupSecretsProvider(w http.ResponseWriter, r *http.Requ
 		providerType = secrets.EncryptedType
 	case string(secrets.OnePasswordType):
 		providerType = secrets.OnePasswordType
+	case string(secrets.BitwardenType):
+		providerType = secrets.BitwardenType
 	case string(secrets.EnvironmentType):
 		providerType = secrets.EnvironmentType
 	case "":
@@ -109,11 +110,12 @@ func (s *SecretsRoutes) setupSecretsProvider(w http.ResponseWriter, r *http.Requ
 		)
 	default:
 		return httperr.WithCode(
-			fmt.Errorf("invalid secrets provider type: %s (valid types: %s, %s, %s)",
+			fmt.Errorf("invalid secrets provider type: %s (valid types: %s, %s, %s, %s)",
 				req.ProviderType,
 				string(secrets.EncryptedType),
 				string(secrets.OnePasswordType),
 				string(secrets.EnvironmentType),
+				string(secrets.BitwardenType),
 			),
 			http.StatusBadRequest,
 		)
@@ -143,7 +145,7 @@ func (s *SecretsRoutes) setupSecretsProvider(w http.ResponseWriter, r *http.Requ
 	// Determine password to use - only for encrypted provider during initial setup or reconfiguration
 	// TODO Temporary hack to allow API users to not have to use a password
 	var passwordToUse string
-	if providerType == secrets.EncryptedType && (isInitialSetup || isReconfiguration) {
+	if (providerType == secrets.EncryptedType || providerType == secrets.BitwardenType) && (isInitialSetup || isReconfiguration) {
 		if req.Password != "" {
 			// Use provided password
 			passwordToUse = req.Password
@@ -162,8 +164,8 @@ func (s *SecretsRoutes) setupSecretsProvider(w http.ResponseWriter, r *http.Requ
 	// TODO Validation, creation, config updates etc should all happen in a common cli/api place, needs refactor
 	// Validate that the provider can be created and works correctly
 	// Use the password from the request for encrypted provider validation and setup
-	ctx := context.Background()
-	result := secrets.ValidateProviderWithPassword(ctx, providerType, passwordToUse)
+	ctx := r.Context()
+	result := secrets.ValidateProviderSetup(ctx, providerType, passwordToUse)
 	if !result.Success {
 		if errors.Is(result.Error, secrets.ErrKeyringNotAvailable) {
 			return result.Error
@@ -185,6 +187,10 @@ func (s *SecretsRoutes) setupSecretsProvider(w http.ResponseWriter, r *http.Requ
 	err := s.configProvider.UpdateConfig(func(c *config.Config) error {
 		c.Secrets.ProviderType = string(providerType)
 		c.Secrets.SetupCompleted = true
+		if providerType == secrets.BitwardenType {
+			c.Secrets.SystemProviderType = string(secrets.EncryptedType)
+			c.SecretScopeMigration = false
+		}
 		return nil
 	})
 	if err != nil {
@@ -531,7 +537,7 @@ func (s *SecretsRoutes) getSecretsManager() (secrets.Provider, error) {
 //
 //	@Description	Request to setup a secrets provider
 type setupSecretsRequest struct {
-	// Type of the secrets provider (encrypted, 1password, environment)
+	// Type of the secrets provider (encrypted, 1password, environment, bitwarden)
 	ProviderType string `json:"provider_type"`
 	// Password for encrypted provider (optional, can be set via environment variable)
 	// TODO Review environment variable for this

@@ -303,7 +303,7 @@ func resolveBuildAuthFilesFromSecrets(configuredFiles []string) (map[string]stri
 		return nil, secrets.ErrSecretsNotSetup
 	}
 
-	providerType, err := cfg.Secrets.GetProviderType()
+	providerType, err := cfg.Secrets.GetSystemProviderType()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secrets provider type: %w", err)
 	}

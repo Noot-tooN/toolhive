@@ -650,28 +650,22 @@ func (d *DefaultManager) RunWorkload(ctx context.Context, runConfig *runner.RunC
 
 // validateSecretParameters validates the secret parameters for a workload.
 func (d *DefaultManager) validateSecretParameters(ctx context.Context, runConfig *runner.RunConfig) error {
-	// If there are run secrets, validate them
-
-	hasRegularSecrets := len(runConfig.Secrets) > 0
-	hasRemoteAuthSecret := runConfig.RemoteAuthConfig != nil && runConfig.RemoteAuthConfig.ClientSecret != ""
-
-	if hasRegularSecrets || hasRemoteAuthSecret {
+	// Local OAuth references must not require the external user provider.
+	_, needsUser := runConfig.SecretProviderRequirements()
+	var userProvider secrets.Provider
+	if needsUser {
 		cfg := d.configProvider.GetConfig()
-
 		providerType, err := cfg.Secrets.GetProviderType()
 		if err != nil {
 			return fmt.Errorf("error determining secrets provider type: %w", err)
 		}
-
-		userProvider, err := secrets.CreateProvider(providerType, secrets.WithUserFacing())
+		userProvider, err = secrets.CreateProvider(providerType, secrets.WithUserFacing())
 		if err != nil {
 			return fmt.Errorf("error instantiating secret manager: %w", err)
 		}
-
-		err = runConfig.ValidateSecrets(ctx, userProvider)
-		if err != nil {
-			return fmt.Errorf("error processing secrets: %w", err)
-		}
+	}
+	if err := runConfig.ValidateSecrets(ctx, userProvider); err != nil {
+		return fmt.Errorf("error processing secrets: %w", err)
 	}
 	return nil
 }

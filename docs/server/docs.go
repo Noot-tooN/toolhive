@@ -4134,7 +4134,7 @@ const docTemplate = `{
                         "type": "string"
                     },
                     "provider_type": {
-                        "description": "Type of the secrets provider (encrypted, 1password, environment)",
+                        "description": "Type of the secrets provider (encrypted, 1password, environment, bitwarden)",
                         "type": "string"
                     }
                 },

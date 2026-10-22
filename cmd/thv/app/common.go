@@ -50,7 +50,7 @@ func IsOIDCEnabled(cmd *cobra.Command) bool {
 
 // SetSecretsProvider sets the secrets provider type in the configuration.
 // It validates the input, tests the provider functionality, and updates the configuration.
-// Choices are `encrypted`, `1password`, and `environment`.
+// Bitwarden uses a separate local encrypted store for system credentials.
 func SetSecretsProvider(ctx context.Context, provider secrets.ProviderType) error {
 	// Validate input
 	if provider == "" {
@@ -61,19 +61,21 @@ func SetSecretsProvider(ctx context.Context, provider secrets.ProviderType) erro
 	switch provider {
 	case secrets.EncryptedType:
 	case secrets.OnePasswordType:
+	case secrets.BitwardenType:
 	case secrets.EnvironmentType:
 		// Valid provider type
 	default:
-		return fmt.Errorf("invalid secrets provider type: %s (valid types: %s, %s, %s)",
+		return fmt.Errorf("invalid secrets provider type: %s (valid types: %s, %s, %s, %s)",
 			provider,
 			string(secrets.EncryptedType),
 			string(secrets.OnePasswordType),
 			string(secrets.EnvironmentType),
+			string(secrets.BitwardenType),
 		)
 	}
 
 	// Validate that the provider can be created and works correctly
-	result := secrets.ValidateProvider(ctx, provider)
+	result := secrets.ValidateProviderSetup(ctx, provider, "")
 	if !result.Success {
 		return fmt.Errorf("provider validation failed: %w", result.Error)
 	}
@@ -82,6 +84,10 @@ func SetSecretsProvider(ctx context.Context, provider secrets.ProviderType) erro
 	err := config.UpdateConfig(func(c *config.Config) error {
 		c.Secrets.ProviderType = string(provider)
 		c.Secrets.SetupCompleted = true
+		if provider == secrets.BitwardenType {
+			c.Secrets.SystemProviderType = string(secrets.EncryptedType)
+			c.SecretScopeMigration = false
+		}
 		return nil
 	})
 	if err != nil {

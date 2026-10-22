@@ -138,7 +138,7 @@ func resolveTokenSource(cfg *config.Config, interactive bool) auth.TokenSource {
 
 	// Try to create secrets provider for token persistence
 	var secretsProvider secrets.Provider
-	providerType, err := cfg.Secrets.GetProviderType()
+	providerType, err := cfg.Secrets.GetSystemProviderType()
 	if err != nil {
 		slog.Debug("Secrets provider not available for registry auth token persistence",
 			"error", err)

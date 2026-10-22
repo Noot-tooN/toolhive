@@ -108,7 +108,7 @@ func TestSetupSecretsProvider_InvalidRequests(t *testing.T) {
 				ProviderType: "invalid",
 			},
 			expectedCode: http.StatusBadRequest,
-			errorMessage: "invalid secrets provider type: invalid (valid types: encrypted, 1password, environment)",
+			errorMessage: "invalid secrets provider type: invalid (valid types: encrypted, 1password, environment, bitwarden)",
 		},
 		{
 			name:         "invalid json body",
@@ -579,4 +579,26 @@ func TestRouterIntegration(t *testing.T) {
 func TestConstants(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "default", defaultSecretsProviderName)
+}
+
+func TestSetupSecretsProvider_BitwardenFailurePreservesConfiguration(t *testing.T) {
+	t.Setenv("BWS_ACCESS_TOKEN", "")
+	provider := config.NewPathProvider(filepath.Join(t.TempDir(), "config.yaml"))
+	original := config.Secrets{ProviderType: "environment", SetupCompleted: true}
+	require.NoError(t, provider.UpdateConfig(func(cfg *config.Config) error {
+		cfg.Secrets = original
+		return nil
+	}))
+	body := bytes.NewBufferString(`{"provider_type":"bitwarden","password":"synthetic-local-password"}`)
+	req := httptest.NewRequest(http.MethodPost, "/", body)
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	routes := NewSecretsRoutesWithProvider(provider)
+	apierrors.ErrorHandler(routes.setupSecretsProvider).ServeHTTP(response, req)
+
+	assert.Equal(t, http.StatusInternalServerError, response.Code)
+	assert.Equal(t, "Internal Server Error\n", response.Body.String())
+	assert.NotContains(t, response.Body.String(), "synthetic-local-password")
+	assert.Equal(t, original, provider.GetConfig().Secrets,
+		"failed Bitwarden validation must not mark local storage configured")
 }

@@ -9,16 +9,19 @@ graph LR
     subgraph "Providers"
         Encrypted[Encrypted Storage<br/>AES-256-GCM]
         OnePass[1Password SDK]
+        Bitwarden[Bitwarden Secrets Manager CLI]
         Env[Environment Vars]
     end
 
     Provider[Secret Provider] --> Fallback[Fallback Chain]
     Encrypted --> Provider
     OnePass --> Provider
+    Bitwarden --> Provider
     Env --> Provider
     Fallback --> Container[Container EnvVars]
 
     Keyring[OS Keyring] -.->|password| Encrypted
+    Keyring -.->|machine account token| Bitwarden
 
     style Encrypted fill:#81c784
     style Keyring fill:#ba68c8
@@ -27,7 +30,7 @@ graph LR
 ## Provider Types
 
 **Implementation**:
-- `pkg/secrets/factory.go` (`ProviderType` enum: `EncryptedType`, `OnePasswordType`, `EnvironmentType`)
+- `pkg/secrets/factory.go` (`ProviderType` enum: `EncryptedType`, `OnePasswordType`, `BitwardenType`, `EnvironmentType`)
 - `pkg/secrets/types.go` defines the `Provider` interface (the contract every provider implements) and the `EnvVarPrefix` constant (`"TOOLHIVE_SECRET_"`) used by the environment provider
 
 ### 1. Encrypted
@@ -59,6 +62,147 @@ graph LR
 - **Security**: Prevents enumeration of all environment variables
 
 **Implementation**: `pkg/secrets/environment.go`
+
+### 4. Bitwarden Secrets Manager
+
+- **Provider name**: `bitwarden`
+- **Storage**: Bitwarden Secrets Manager, accessed through a separately installed `bws` CLI
+- **Authentication**: Machine account access token in the OS credential store, with an optional `BWS_ACCESS_TOKEN` override
+- **Capabilities**: Read and list; create, update, and delete secrets in Bitwarden itself
+- **References**: `bws://<UUID>` identifies a secret by its stable ID, not its display name
+
+**Implementation**: `pkg/secrets/bitwarden.go`, `pkg/secrets/clients/bitwarden.go`
+
+#### Setup and use
+
+Install the Bitwarden Secrets Manager CLI (`bws`) and create a machine account
+with read access to only the required projects or secrets. Use a separate access
+token for each computer so you can revoke its access independently. ToolHive
+does not install `bws` or create the account.
+
+The `bws` executable must be on the process's `PATH`. Alternatively, set
+`TOOLHIVE_BWS_PATH` to its absolute path. Configure any required Bitwarden server
+settings for that CLI before using the provider.
+
+With those prerequisites available:
+
+```bash
+# Enter the machine account token at a hidden prompt, validate it, and save it locally.
+thv secret bitwarden login
+
+# Validate Bitwarden access and initialize local encrypted OAuth storage.
+thv secret provider bitwarden
+
+# List secret references and display names, without their values.
+thv secret list
+
+# Inject a secret into an MCP server's environment.
+thv run my-server \
+  --secret 'bws://12345678-1234-4234-8234-123456789abc,target=API_KEY'
+```
+
+Interactive `thv secret setup` also offers Bitwarden and prompts for a token
+when none is configured. Setup validates access by listing secrets and
+initializes the writable local encrypted store used for internal credentials.
+It requires a working OS keyring. If a local store already exists, its existing
+keyring password is retained. Setup does not copy user secrets to Bitwarden or
+change running workloads.
+
+References require the hyphenated UUID of a secret. Duplicate display names are
+allowed because lookup uses the UUID. Bitwarden failures, including invalid
+references, denied access, and connectivity failures, return an error without
+falling back to a different secret source. Values are resolved when the workload
+starts; changing a value in Bitwarden does not update an already-running
+container's environment.
+
+For a registry server that requires secrets, provide an explicit `--secret`
+mapping for each required secret. ToolHive cannot save an interactively entered
+value through this read-only provider.
+
+#### Access token storage and precedence
+
+`thv secret bitwarden login` validates the entered token with `bws` before saving
+it. The token uses persistent native credential storage:
+
+| Platform | Credential store |
+|----------|------------------|
+| macOS | Keychain |
+| Windows | Credential Manager |
+| Linux | Secret Service, such as GNOME Keyring |
+
+The dedicated credential has service name `toolhive-bitwarden` and account name
+`access-token`. It is separate from the password protecting the local encrypted
+OAuth store. ToolHive does not search other credential entries or fall back to
+plaintext files or Linux's session-only `keyctl` storage for this token.
+
+When `BWS_ACCESS_TOKEN` is set, it takes precedence over the saved token. An empty
+or invalid override fails instead of trying the saved credential. ToolHive does
+not automatically save environment-provided tokens. This supports CI and
+headless deployments that inject the token from their own secret store.
+Otherwise, ToolHive reads the native credential and passes the token to the
+`bws` child process through its environment. Keep tokens out of shared
+configuration files; portable workload configurations contain `bws://` references.
+
+To save a token supplied by another local secret tool, pipe its output into
+`thv secret bitwarden login --token-stdin`. The normal login command requires an
+interactive terminal and does not accept tokens as command-line arguments.
+Running login again validates and replaces the saved token.
+
+```bash
+# Remove the saved token from this computer.
+thv secret bitwarden logout
+```
+
+Logout only removes the local credential. It does not revoke the access token in
+Bitwarden, clear an environment override, or stop running workloads. Revoke a
+compromised or retired token in Bitwarden itself.
+
+#### User secrets and internal credentials
+
+ToolHive separates user-supplied secrets from internal credentials. With
+Bitwarden selected, user references are read from Bitwarden, while OAuth tokens,
+dynamically registered client credentials, and registry authentication state use
+the local encrypted provider. Internal credentials are scoped separately from
+user secrets. ToolHive never writes OAuth refreshes to Bitwarden.
+
+Selecting Bitwarden records this separation in configuration:
+
+```yaml
+secrets:
+  provider_type: bitwarden
+  system_provider_type: encrypted
+  setup_completed: true
+```
+
+For existing configurations without `system_provider_type`, internal storage
+continues to follow the selected user provider, except that `bitwarden` resolves
+to `encrypted` for internal storage. An explicit `system_provider_type` supports
+only `encrypted` and is independent of the `TOOLHIVE_SECRETS_PROVIDER` override.
+This preserves the provider selection of existing installations. Selecting a
+provider does not migrate credentials between stores or rewrite existing
+workload references; plan those changes separately.
+
+#### Background processes and restarts
+
+Every process that resolves a Bitwarden reference needs access to `bws` and
+either the saved native credential or a `BWS_ACCESS_TOKEN` override. A saved
+token survives restarts; desktop applications and detached processes must run
+as the same OS user with access to that user's unlocked credential store. Linux
+Secret Service also requires access to the user's session bus. The OS may prompt
+to unlock the store or authorize access. If access fails, ToolHive returns an
+error; it does not prompt for a token during secret retrieval or silently switch
+storage backends.
+
+For headless services, inject `BWS_ACCESS_TOKEN` through the service's secret
+management mechanism. Setting it in a terminal does not provision an
+already-running `thv serve`, desktop application, or login service. Configure
+the actual launcher and restart it to pick up environment changes. Set
+`TOOLHIVE_BWS_PATH` there when its `PATH` does not include `bws`.
+
+ToolHive does not install a login service. The local encrypted OAuth store and
+its OS keyring entry must also remain available to processes that use internal
+credentials. A workload using only local OAuth references does not require a
+Bitwarden lookup or token.
 
 ## Kubernetes Mode
 
@@ -101,9 +245,11 @@ For systems like HashiCorp Vault or External Secrets Operator, use `podTemplateM
 
 **Default behavior** (can be disabled):
 
-1. Primary provider (encrypted/1password)
+1. Primary provider (`encrypted` or `1password`)
 2. Environment variable (`TOOLHIVE_SECRET_<NAME>`)
 3. Error if not found
+
+Bitwarden references fail without environment fallback when retrieval fails.
 
 **Implementation**: `pkg/secrets/fallback.go`, `pkg/secrets/factory.go`
 
@@ -237,7 +383,7 @@ Registry defines secret requirements:
 
 **Prompting behavior depends on execution context:**
 
-- **CLI Interactive Mode**: ToolHive prompts for missing required secret values on first run. If a secrets manager is configured, it attempts to retrieve the secret first and only prompts if not found. Prompted values are automatically stored in the secrets manager for future use.
+- **CLI Interactive Mode**: ToolHive prompts for missing required secret values on first run. If a secrets manager is configured, it attempts to retrieve the secret first and only prompts if not found. Prompted values are automatically stored when the secrets manager supports writes. With Bitwarden, supply explicit secret references instead of prompted values.
 
 - **Detached/Background Mode**: Cannot prompt (no TTY). Missing required secrets cause an error. All secrets must be provided via `--secret` flag or pre-configured in secrets manager.
 
@@ -254,12 +400,16 @@ Registry defines secret requirements:
 
 ## Provider Selection
 
-**Priority:**
+**User provider priority:**
 1. `TOOLHIVE_SECRETS_PROVIDER` environment variable
 2. Config file: `~/.config/toolhive/config.yaml`
 3. Default: `encrypted`
 
-**Implementation**: `pkg/secrets/factory.go`
+Except for the `environment` provider, setup must be complete before an
+environment override can be used. Internal credentials use the separate
+selection rules described under [User secrets and internal credentials](#user-secrets-and-internal-credentials).
+
+**Implementation**: `pkg/config/config.go`, `pkg/secrets/factory.go`
 
 ## Related Documentation
 
