@@ -335,6 +335,43 @@ thv run https://remote-mcp-server.com \
   --remote-auth-timeout 2m
 ```
 
+### Static credentials from Bitwarden
+
+After [configuring the Bitwarden provider](arch/04-secrets-management.md#4-bitwarden-secrets-manager),
+use a `bws://<UUID>,target=<name>` reference for a static bearer token or OAuth
+client secret:
+
+```bash
+thv run https://remote-mcp-server.com \
+  --remote-auth-bearer-token 'bws://12345678-1234-4234-8234-123456789abc,target=bearer_token'
+
+thv run https://remote-mcp-server.com \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret 'bws://12345678-1234-4234-8234-123456789abc,target=client_secret'
+```
+
+Include the `,target=...` suffix so ToolHive recognizes the value as a secret
+reference. The `bws://` prefix routes these static references to the user secrets
+provider. Ordinary internal authentication references continue to use the system
+provider. Reference lookup failures return an error without switching providers.
+The workload configuration retains the reference; its resolved value is kept in
+memory for authentication.
+
+Bitwarden is read-only in ToolHive. OAuth access and refresh tokens, dynamically
+registered client credentials, and registry login credentials are stored in the
+local encrypted system provider. Setup initializes that store before background
+processes need it. Existing credentials and running workloads are not migrated
+when you switch providers.
+
+Save the machine account token once per computer with
+`thv secret bitwarden login`, or inject `BWS_ACCESS_TOKEN` from a service's secret
+store. The environment variable takes precedence over the saved credential. Processes resolving static
+Bitwarden references need access to `bws` and the token at startup, including
+after a restart or reboot. See the
+[background-process requirements](arch/04-secrets-management.md#background-processes-and-restarts)
+for launcher configuration and native credential-store access.
+
 ### Registry Configuration
 
 Remote servers can be configured in the registry with OAuth settings:

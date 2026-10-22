@@ -26,6 +26,7 @@ making it suitable for scripted deployments and automation.
 		  - encrypted: Full read-write secrets provider using AES-256-GCM encryption
 		  - 1password: Read-only secrets provider (requires OP_SERVICE_ACCOUNT_TOKEN)
 		  - environment: Read-only secrets provider from TOOLHIVE_SECRET_* env vars
+		  - bitwarden: Read-only bws://UUID secrets; OAuth stays encrypted locally (saved OS credential or BWS_ACCESS_TOKEN)
 
 ```
 thv secret provider <name> [flags]

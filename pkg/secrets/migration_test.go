@@ -188,13 +188,14 @@ func TestDiscoverMigrations(t *testing.T) {
 					{Key: "BEARER_TOKEN_foo"},
 					{Key: "OAUTH_CLIENT_SECRET_bar"},
 					{Key: "OAUTH_REFRESH_TOKEN_baz"},
+					{Key: "OAUTH_REG_TOKEN_client"},
 					{Key: "registry-user-myrepo"},
 					{Key: "registry-default-prod"},
 					{Key: "BUILD_AUTH_FILE_docker"},
 					{Key: "REGISTRY_OAUTH_ghcr"},
 				}, nil)
 			},
-			wantCount: 7,
+			wantCount: 8,
 		},
 		{
 			name: "skips already-migrated keys",

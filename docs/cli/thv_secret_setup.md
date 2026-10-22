@@ -25,6 +25,7 @@ configuration and ensures the selected provider initializes properly.
 			  - encrypted: Stores secrets in an encrypted file using AES-256-GCM using the OS keyring
 			  - 1password: Read-only access to 1Password secrets (requires OP_SERVICE_ACCOUNT_TOKEN environment variable)
 			  - environment: Read-only access to secrets from TOOLHIVE_SECRET_* env vars
+			  - bitwarden: Read-only Bitwarden Secrets Manager; OAuth stays encrypted locally (saved OS credential or BWS_ACCESS_TOKEN)
 
 Run this command before using any other secrets functionality.
 

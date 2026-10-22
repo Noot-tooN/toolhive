@@ -25,6 +25,7 @@ var SystemKeyPrefixMappings = []struct {
 	{"BEARER_TOKEN_", ScopeWorkloads},
 	{"OAUTH_CLIENT_SECRET_", ScopeWorkloads},
 	{"OAUTH_REFRESH_TOKEN_", ScopeWorkloads},
+	{"OAUTH_REG_TOKEN_", ScopeWorkloads},
 	{"registry-user-", ScopeWorkloads},
 	{"registry-default-", ScopeWorkloads},
 	{"BUILD_AUTH_FILE_", ScopeWorkloads},

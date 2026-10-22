@@ -77,7 +77,7 @@ func newSecretsProvider(configProvider config.Provider) (secrets.Provider, error
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
-	providerType, err := cfg.Secrets.GetProviderType()
+	providerType, err := cfg.Secrets.GetSystemProviderType()
 	if err != nil {
 		return nil, fmt.Errorf("getting secrets provider type: %w", err)
 	}

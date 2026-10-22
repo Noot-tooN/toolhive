@@ -520,3 +520,49 @@ func TestSecrets_GetProviderType_EnvironmentVariable(t *testing.T) {
 		assert.Contains(t, err.Error(), "requires setup to be completed", "Error should mention setup requirement")
 	})
 }
+
+func TestSecrets_GetSystemProviderTypeWithEnv(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		provider string
+		system   string
+		env      string
+		setup    bool
+		want     secrets.ProviderType
+		wantErr  string
+	}{
+		{name: "legacy encrypted", provider: "encrypted", setup: true, want: secrets.EncryptedType},
+		{name: "legacy onepassword", provider: "1password", setup: true, want: secrets.OnePasswordType},
+		{name: "legacy environment override without setup", env: "environment", want: secrets.EnvironmentType},
+		{name: "legacy user override", provider: "encrypted", env: "1password", setup: true, want: secrets.OnePasswordType},
+		{name: "bitwarden defaults to local", provider: "bitwarden", setup: true, want: secrets.EncryptedType},
+		{name: "bitwarden override defaults to local", provider: "environment", env: "bitwarden", setup: true, want: secrets.EncryptedType},
+		{name: "explicit local ignores external override", provider: "bitwarden", system: "encrypted", env: "1password", setup: true, want: secrets.EncryptedType},
+		{name: "explicit local ignores invalid user override", system: "encrypted", env: "invalid", setup: true, want: secrets.EncryptedType},
+		{name: "explicit local requires setup", system: "encrypted", env: "environment", wantErr: secrets.ErrSecretsNotSetup.Error()},
+		{name: "external system rejected", provider: "bitwarden", system: "bitwarden", setup: true, wantErr: "invalid system secrets provider type"},
+		{name: "unknown system rejected", system: "invalid", setup: true, wantErr: "invalid system secrets provider type"},
+		{name: "missing setup", wantErr: secrets.ErrSecretsNotSetup.Error()},
+		{name: "bitwarden override requires setup", env: "bitwarden", wantErr: "requires setup"},
+		{name: "unknown user provider", provider: "invalid", setup: true, wantErr: "invalid secrets provider type"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reader := mocks.NewMockReader(gomock.NewController(t))
+			// An explicit internal provider must not consult the user override.
+			if tc.system == "" {
+				reader.EXPECT().Getenv(secrets.ProviderEnvVar).Return(tc.env)
+			}
+			cfg := Secrets{ProviderType: tc.provider, SystemProviderType: tc.system, SetupCompleted: tc.setup}
+			got, err := cfg.GetSystemProviderTypeWithEnv(reader)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}

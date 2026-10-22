@@ -19311,7 +19311,7 @@ type SetupSecretsRequest struct {
 	// Password for encrypted provider (optional, can be set via environment variable)
 	// TODO Review environment variable for this.
 	Password OptString `json:"password"`
-	// Type of the secrets provider (encrypted, 1password, environment).
+	// Type of the secrets provider (encrypted, 1password, environment, bitwarden).
 	ProviderType string `json:"provider_type"`
 }
 

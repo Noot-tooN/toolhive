@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 
 	"golang.org/x/term"
@@ -104,7 +105,10 @@ func (v *CLIEnvVarValidator) Validate(
 
 		// Copy existing secrets
 		secretsList = append(secretsList, secretsConfig...)
-		registryEnvVars := metadata.EnvVars
+		registryEnvVars, err := v.prepareRegistryEnvVars(metadata.EnvVars, envVars, secretsList)
+		if err != nil {
+			return nil, err
+		}
 
 		// Initialize secrets manager if needed
 		secretsManager := v.initializeSecretsManagerIfNeeded(registryEnvVars)
@@ -160,6 +164,41 @@ func (v *CLIEnvVarValidator) Validate(
 	}
 
 	return envVars, nil
+}
+
+// prepareRegistryEnvVars prevents prompts and plaintext fallback for Bitwarden
+// secrets. Supplied references are resolved later through the user provider.
+func (v *CLIEnvVarValidator) prepareRegistryEnvVars(
+	registryEnvVars []*registry.EnvVar,
+	envVars map[string]string,
+	secretsList []string,
+) ([]*registry.EnvVar, error) {
+	// A read-only Bitwarden provider cannot store prompted values. Require
+	// references before initializing any storage, including local OAuth storage.
+	cfg := v.configProvider.GetConfig()
+	providerType, providerErr := cfg.Secrets.GetProviderType()
+	requestedProvider := os.Getenv(secrets.ProviderEnvVar)
+	if requestedProvider == "" {
+		requestedProvider = cfg.Secrets.ProviderType
+	}
+	if providerErr != nil && requestedProvider == string(secrets.BitwardenType) {
+		return nil, fmt.Errorf("bitwarden secrets provider is unavailable: %w", providerErr)
+	}
+	if providerErr == nil && providerType == secrets.BitwardenType {
+		for _, envVar := range registryEnvVars {
+			if envVar.Secret && (envVar.Required || envVar.Default != "") &&
+				!isEnvVarProvided(envVar.Name, envVars, secretsList) {
+				return nil, fmt.Errorf("secret %s requires a Bitwarden reference: use --secret bws://<UUID>,target=%s",
+					envVar.Name, envVar.Name)
+			}
+		}
+		// All secrets are supplied explicitly. Only non-secret fields may
+		// still need prompting/defaults below.
+		registryEnvVars = slices.DeleteFunc(slices.Clone(registryEnvVars), func(v *registry.EnvVar) bool {
+			return v.Secret
+		})
+	}
+	return registryEnvVars, nil
 }
 
 // promptForEnvironmentVariable prompts the user for an environment variable value

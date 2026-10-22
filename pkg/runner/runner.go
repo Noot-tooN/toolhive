@@ -294,22 +294,31 @@ func (r *Runner) Run(ctx context.Context) error {
 		cfgprovider := config.NewDefaultProvider()
 		cfg := cfgprovider.GetConfig()
 
-		providerType, err := cfg.Secrets.GetProviderType()
-		if err != nil {
-			return fmt.Errorf("error determining secrets provider type: %w", err)
+		needsSystem, needsUser := r.Config.SecretProviderRequirements()
+		var systemProvider, userProvider secrets.Provider
+		if needsSystem {
+			providerType, err := cfg.Secrets.GetSystemProviderType()
+			if err != nil {
+				return fmt.Errorf("error determining system secrets provider type: %w", err)
+			}
+			systemProvider, err = secrets.CreateProvider(providerType, secrets.WithScope(secrets.ScopeWorkloads))
+			if err != nil {
+				return fmt.Errorf("error instantiating system secret manager: %w", err)
+			}
 		}
-
-		systemProvider, err := secrets.CreateProvider(providerType, secrets.WithScope(secrets.ScopeWorkloads))
-		if err != nil {
-			return fmt.Errorf("error instantiating system secret manager: %w", err)
-		}
-		userProvider, err := secrets.CreateProvider(providerType, secrets.WithUserFacing())
-		if err != nil {
-			return fmt.Errorf("error instantiating user secret manager: %w", err)
+		if needsUser {
+			providerType, err := cfg.Secrets.GetProviderType()
+			if err != nil {
+				return fmt.Errorf("error determining user secrets provider type: %w", err)
+			}
+			userProvider, err = secrets.CreateProvider(providerType, secrets.WithUserFacing())
+			if err != nil {
+				return fmt.Errorf("error instantiating user secret manager: %w", err)
+			}
 		}
 
 		// Process secrets (including RemoteAuthConfig and header forward secret resolution)
-		if _, err = r.Config.WithSecrets(ctx, systemProvider, userProvider); err != nil {
+		if _, err := r.Config.WithSecrets(ctx, systemProvider, userProvider); err != nil {
 			return err
 		}
 	}
@@ -1354,4 +1363,25 @@ func (r *Runner) startEmbeddedAuthServerListener() error {
 		return fmt.Errorf("failed to start auth server TLS listener: %w", err)
 	}
 	return nil
+}
+
+// SecretProviderRequirements avoids initializing an external provider when only
+// local OAuth credentials are needed. Plaintext auth values need no provider.
+func (c *RunConfig) SecretProviderRequirements() (needsSystem, needsUser bool) {
+	needsUser = len(c.Secrets) > 0 || (c.HeaderForward != nil && len(c.HeaderForward.AddHeadersFromSecret) > 0)
+	if c.RemoteAuthConfig == nil {
+		return false, needsUser
+	}
+	for _, value := range []string{c.RemoteAuthConfig.ClientSecret, c.RemoteAuthConfig.BearerToken} {
+		param, err := secrets.ParseSecretParameter(value)
+		if err != nil {
+			continue
+		}
+		if secrets.IsBitwardenReference(param.Name) {
+			needsUser = true
+		} else {
+			needsSystem = true
+		}
+	}
+	return needsSystem, needsUser
 }

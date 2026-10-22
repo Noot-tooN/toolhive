@@ -30,7 +30,7 @@ func CheckAndPerformSecretScopeMigration() {
 			return
 		}
 
-		providerType, err := appConfig.Secrets.GetProviderType()
+		providerType, err := appConfig.Secrets.GetSystemProviderType()
 		if err != nil {
 			slog.Error("failed to get secrets provider type for migration", "error", err)
 			return

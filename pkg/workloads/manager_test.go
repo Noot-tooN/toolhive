@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/stacklok/toolhive/pkg/auth/remote"
 	"github.com/stacklok/toolhive/pkg/config"
 	configMocks "github.com/stacklok/toolhive/pkg/config/mocks"
 	"github.com/stacklok/toolhive/pkg/container/runtime"
@@ -1331,6 +1332,32 @@ func TestDefaultManager_validateSecretParameters(t *testing.T) {
 			},
 			setupMocks:  func(*configMocks.MockProvider) {}, // No expectations
 			expectError: false,
+		},
+		{
+			name: "local OAuth restart skips user provider",
+			runConfig: &runner.RunConfig{RemoteAuthConfig: &remote.Config{
+				ClientSecret:          "OAUTH_CLIENT_SECRET_demo,target=oauth_secret",
+				CachedRefreshTokenRef: "OAUTH_REFRESH_TOKEN_demo",
+			}},
+			setupMocks: func(*configMocks.MockProvider) {},
+		},
+		{
+			name:        "malformed local auth is still rejected without provider initialization",
+			runConfig:   &runner.RunConfig{RemoteAuthConfig: &remote.Config{ClientSecret: "invalid-reference"}},
+			setupMocks:  func(*configMocks.MockProvider) {},
+			expectError: true,
+			errorMsg:    "error processing secrets",
+		},
+		{
+			name: "external OAuth secret requires user provider",
+			runConfig: &runner.RunConfig{RemoteAuthConfig: &remote.Config{
+				ClientSecret: "bws://12345678-1234-4234-8234-123456789abc,target=oauth_secret",
+			}},
+			setupMocks: func(cp *configMocks.MockProvider) {
+				cp.EXPECT().GetConfig().Return(&config.Config{})
+			},
+			expectError: true,
+			errorMsg:    "error determining secrets provider type",
 		},
 		{
 			name: "config error",

@@ -73,8 +73,11 @@ type RegistryOAuthConfig = oidc.ClientConfig
 
 // Secrets contains the settings for secrets management.
 type Secrets struct {
-	ProviderType   string `yaml:"provider_type"`
-	SetupCompleted bool   `yaml:"setup_completed"`
+	ProviderType string `yaml:"provider_type"`
+	// SystemProviderType selects storage for internal credentials. Empty preserves
+	// the user provider, except Bitwarden always uses local encrypted storage.
+	SystemProviderType string `yaml:"system_provider_type,omitempty"`
+	SetupCompleted     bool   `yaml:"setup_completed"`
 }
 
 // validateProviderType validates and returns the secrets provider type.
@@ -86,12 +89,15 @@ func validateProviderType(provider string) (secrets.ProviderType, error) {
 		return secrets.OnePasswordType, nil
 	case string(secrets.EnvironmentType):
 		return secrets.EnvironmentType, nil
+	case string(secrets.BitwardenType):
+		return secrets.BitwardenType, nil
 	default:
-		return "", fmt.Errorf("invalid secrets provider type: %s (valid types: %s, %s, %s)",
+		return "", fmt.Errorf("invalid secrets provider type: %s (valid types: %s, %s, %s, %s)",
 			provider,
 			string(secrets.EncryptedType),
 			string(secrets.OnePasswordType),
 			string(secrets.EnvironmentType),
+			string(secrets.BitwardenType),
 		)
 	}
 }
@@ -113,7 +119,7 @@ func (s *Secrets) GetProviderType() (secrets.ProviderType, error) {
 //
 // Special handling when SetupCompleted is false:
 //   - Only the "environment" provider can be set via env var when SetupCompleted is false
-//   - Other providers (encrypted, 1password) require setup and will return ErrSecretsNotSetup
+//   - Other providers (encrypted, 1password, bitwarden) require setup and will return ErrSecretsNotSetup
 //   - This prevents confusing errors later when trying to create providers that need setup
 //
 // Why environment provider bypasses SetupCompleted:
@@ -124,7 +130,7 @@ func (s *Secrets) GetProviderType() (secrets.ProviderType, error) {
 //
 // For CLI users:
 //   - If they set TOOLHIVE_SECRETS_PROVIDER=environment, it works without setup
-//   - If they set TOOLHIVE_SECRETS_PROVIDER=encrypted/1password without setup, it returns an error
+//   - If they set TOOLHIVE_SECRETS_PROVIDER=encrypted/1password/bitwarden without setup, it returns an error
 //   - This prevents confusing errors when providers fail to initialize later
 func (s *Secrets) GetProviderTypeWithEnv(envReader env.Reader) (secrets.ProviderType, error) {
 	// First check the environment variable (takes precedence) - this allows Kubernetes deployments
@@ -137,7 +143,7 @@ func (s *Secrets) GetProviderTypeWithEnv(envReader env.Reader) (secrets.Provider
 		}
 
 		// Special case: Only allow "environment" provider when SetupCompleted is false
-		// Other providers (encrypted, 1password) require setup and will fail later when
+		// Other providers (encrypted, 1password, bitwarden) require setup and will fail later when
 		// trying to create them (keyring, password, 1Password CLI, etc.)
 		if !s.SetupCompleted && providerType != secrets.EnvironmentType {
 			return "", fmt.Errorf(
@@ -159,6 +165,38 @@ func (s *Secrets) GetProviderTypeWithEnv(envReader env.Reader) (secrets.Provider
 
 	// Fall back to config file
 	return validateProviderType(s.ProviderType)
+}
+
+// GetSystemProviderType returns storage for internal credentials, including OAuth.
+// Explicit storage is independent of the user provider environment override.
+// Bitwarden stores only user secrets; its internal credentials always stay local.
+func (s *Secrets) GetSystemProviderType() (secrets.ProviderType, error) {
+	return s.GetSystemProviderTypeWithEnv(&env.OSReader{})
+}
+
+// GetSystemProviderTypeWithEnv resolves internal storage using an injected environment reader.
+// An empty system provider preserves existing configurations, except that Bitwarden
+// uses encrypted local storage. Explicit overrides currently support only encrypted.
+func (s *Secrets) GetSystemProviderTypeWithEnv(envReader env.Reader) (secrets.ProviderType, error) {
+	if s.SystemProviderType != "" {
+		if s.SystemProviderType != string(secrets.EncryptedType) {
+			return "", fmt.Errorf("invalid system secrets provider type: %s (valid type: %s)",
+				s.SystemProviderType, secrets.EncryptedType)
+		}
+		if !s.SetupCompleted {
+			return "", secrets.ErrSecretsNotSetup
+		}
+		return secrets.EncryptedType, nil
+	}
+
+	providerType, err := s.GetProviderTypeWithEnv(envReader)
+	if err != nil {
+		return "", err
+	}
+	if providerType == secrets.BitwardenType {
+		return secrets.EncryptedType, nil
+	}
+	return providerType, nil
 }
 
 // Clients contains settings for client configuration.

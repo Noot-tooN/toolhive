@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/adrg/xdg"
+	"github.com/google/uuid"
 	"golang.org/x/term"
 
 	"github.com/stacklok/toolhive-core/httperr"
@@ -54,6 +55,9 @@ const (
 	// OnePasswordType represents the 1Password secret provider.
 	OnePasswordType ProviderType = "1password"
 
+	// BitwardenType reads user secrets from Bitwarden Secrets Manager.
+	BitwardenType ProviderType = "bitwarden"
+
 	// EnvironmentType represents the environment variable secret provider
 	EnvironmentType ProviderType = "environment"
 )
@@ -84,6 +88,33 @@ func ValidateProvider(ctx context.Context, providerType ProviderType) *SetupResu
 	return ValidateProviderWithPassword(ctx, providerType, "")
 }
 
+// ValidateProviderSetup validates user storage and, for Bitwarden, initializes
+// the local writable store used for OAuth. It must run before spawning detached
+// workloads, which cannot prompt for a local encryption password.
+func ValidateProviderSetup(ctx context.Context, providerType ProviderType, password string) *SetupResult {
+	result := ValidateProviderWithPassword(ctx, providerType, password)
+	if !result.Success || providerType != BitwardenType {
+		return result
+	}
+	if password == "" {
+		var err error
+		password, err = GenerateSecurePassword()
+		if err != nil {
+			result.Success = false
+			result.Error = fmt.Errorf("initialize local OAuth storage: %w", err)
+			return result
+		}
+	}
+	// Existing keyring credentials take precedence over this initial password.
+	local := ValidateProviderWithPassword(ctx, EncryptedType, password)
+	if !local.Success {
+		result.Success = false
+		result.Error = fmt.Errorf("initialize local OAuth storage: %w", local.Error)
+		result.Message = "Bitwarden connected, but local OAuth storage is unavailable"
+	}
+	return result
+}
+
 // ValidateProviderWithPassword validates that a provider can be created and performs basic functionality tests.
 // If password is provided for encrypted provider, it uses that password instead of reading from stdin.
 func ValidateProviderWithPassword(ctx context.Context, providerType ProviderType, password string) *SetupResult {
@@ -106,6 +137,15 @@ func ValidateProviderWithPassword(ctx context.Context, providerType ProviderType
 		return validateEncryptedProvider(ctx, provider, result)
 	case OnePasswordType:
 		return validateOnePasswordProvider(ctx, provider, result)
+	case BitwardenType:
+		if _, err := provider.ListSecrets(ctx); err != nil {
+			result.Error = fmt.Errorf("failed to connect to Bitwarden: %w", err)
+			result.Message = "Bitwarden provider validation failed"
+			return result
+		}
+		result.Success = true
+		result.Message = "Bitwarden provider validation successful"
+		return result
 	case EnvironmentType:
 		return ValidateEnvironmentProvider(ctx, provider, result)
 	default:
@@ -141,7 +181,7 @@ func ValidateEnvironmentProvider(ctx context.Context, provider Provider, result 
 // validateEncryptedProvider tests basic encrypted provider functionality
 func validateEncryptedProvider(ctx context.Context, provider Provider, result *SetupResult) *SetupResult {
 	// Test basic functionality with a temporary secret
-	testKey := "setup-validation-test"
+	testKey := "setup-validation-" + uuid.NewString()
 	testValue := "test-value"
 
 	// Test setting a secret
@@ -150,6 +190,14 @@ func validateEncryptedProvider(ctx context.Context, provider Provider, result *S
 		result.Message = "Failed to store test secret"
 		return result
 	}
+
+	defer func() {
+		if err := provider.DeleteSecret(ctx, testKey); err != nil {
+			result.Success = false
+			result.Error = fmt.Errorf("failed to remove setup validation secret: %w", err)
+			result.Message = "Failed to clean up test secret"
+		}
+	}()
 
 	// Test retrieving the secret
 	retrievedValue, err := provider.GetSecret(ctx, testKey)
@@ -161,13 +209,10 @@ func validateEncryptedProvider(ctx context.Context, provider Provider, result *S
 
 	// Verify the value matches
 	if retrievedValue != testValue {
-		result.Error = fmt.Errorf("secret test failed: expected %s, got %s", testValue, retrievedValue)
+		result.Error = errors.New("secret value mismatch during validation")
 		result.Message = "Secret value mismatch during validation"
 		return result
 	}
-
-	// Clean up test secret
-	_ = provider.DeleteSecret(ctx, testKey)
 
 	result.Success = true
 	result.Message = "Encrypted provider validation successful"
@@ -231,6 +276,8 @@ func CreateSecretProviderWithPassword(managerType ProviderType, password string)
 		primary = manager
 	case OnePasswordType:
 		primary, err = NewOnePasswordManager()
+	case BitwardenType:
+		primary, err = NewBitwardenManager()
 	case EnvironmentType:
 		// Direct environment provider - no fallback needed
 		return NewEnvironmentProvider(), nil
@@ -242,8 +289,9 @@ func CreateSecretProviderWithPassword(managerType ProviderType, password string)
 		return nil, err
 	}
 
-	// Wrap with fallback provider if enabled
-	if shouldEnableFallback() {
+	// Explicit Bitwarden references never fall back to a different backend.
+	// Preserve environment fallback for existing provider types.
+	if managerType != BitwardenType && shouldEnableFallback() {
 		return NewFallbackProvider(primary), nil
 	}
 

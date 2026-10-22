@@ -697,7 +697,7 @@ func (c *RunConfig) WithSecrets(
 	// Resolve RemoteAuthConfig.ClientSecret while retaining its persistable reference.
 	if c.RemoteAuthConfig != nil && c.RemoteAuthConfig.ClientSecret != "" {
 		if secretParam, err := secrets.ParseSecretParameter(c.RemoteAuthConfig.ClientSecret); err == nil {
-			actualSecret, err := systemProvider.GetSecret(ctx, secretParam.Name)
+			actualSecret, err := resolveAuthSecret(ctx, secretParam.Name, systemProvider, userProvider)
 			if err != nil {
 				return c, fmt.Errorf("failed to resolve OAuth client secret '%s': %w", secretParam.Name, err)
 			}
@@ -708,7 +708,7 @@ func (c *RunConfig) WithSecrets(
 	// Resolve RemoteAuthConfig.BearerToken while retaining its persistable reference.
 	if c.RemoteAuthConfig != nil && c.RemoteAuthConfig.BearerToken != "" {
 		if secretParam, err := secrets.ParseSecretParameter(c.RemoteAuthConfig.BearerToken); err == nil {
-			actualToken, err := systemProvider.GetSecret(ctx, secretParam.Name)
+			actualToken, err := resolveAuthSecret(ctx, secretParam.Name, systemProvider, userProvider)
 			if err != nil {
 				return c, fmt.Errorf("failed to resolve bearer token '%s': %w", secretParam.Name, err)
 			}
@@ -722,6 +722,20 @@ func (c *RunConfig) WithSecrets(
 	}
 
 	return c, nil
+}
+
+// resolveAuthSecret keeps generated OAuth credentials local while permitting
+// explicitly referenced static client secrets and bearer tokens in Bitwarden.
+// Backend selection is explicit: a lookup failure never switches storage.
+func resolveAuthSecret(ctx context.Context, name string, systemProvider, userProvider secrets.Provider) (string, error) {
+	provider := systemProvider
+	if secrets.IsBitwardenReference(name) {
+		provider = userProvider
+	}
+	if provider == nil {
+		return "", fmt.Errorf("secret provider is unavailable for authentication reference")
+	}
+	return provider.GetSecret(ctx, name)
 }
 
 // resolveHeaderForwardSecrets resolves secret references in HeaderForward.AddHeadersFromSecret

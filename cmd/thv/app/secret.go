@@ -6,6 +6,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -41,6 +42,7 @@ Run "thv secret setup" first to configure a secrets provider before using any se
 		newSecretResetKeyringCommand(),
 		newSecretUpgradeProtectionCommand(),
 		newSecretProviderCommand(),
+		newSecretBitwardenCommand(),
 	)
 
 	return cmd
@@ -60,8 +62,10 @@ making it suitable for scripted deployments and automation.
 		Valid secrets providers:
 		  - encrypted: Full read-write secrets provider using AES-256-GCM encryption
 		  - 1password: Read-only secrets provider (requires OP_SERVICE_ACCOUNT_TOKEN)
-		  - environment: Read-only secrets provider from TOOLHIVE_SECRET_* env vars`,
-		Args: cobra.ExactArgs(1),
+		  - environment: Read-only secrets provider from TOOLHIVE_SECRET_* env vars
+		  - bitwarden: Read-only bws://UUID secrets; OAuth stays encrypted locally (saved OS credential or BWS_ACCESS_TOKEN)`,
+		Args:      cobra.ExactArgs(1),
+		ValidArgs: []string{"encrypted", "1password", "environment", "bitwarden"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			provider := args[0]
 			return SetSecretsProvider(cmd.Context(), secrets.ProviderType(provider))
@@ -83,9 +87,11 @@ configuration and ensures the selected provider initializes properly.
 			  - %s: Stores secrets in an encrypted file using AES-256-GCM using the OS keyring
 			  - %s: Read-only access to 1Password secrets (requires OP_SERVICE_ACCOUNT_TOKEN environment variable)
 			  - %s: Read-only access to secrets from TOOLHIVE_SECRET_* env vars
+			  - %s: Read-only Bitwarden Secrets Manager; OAuth stays encrypted locally (saved OS credential or BWS_ACCESS_TOKEN)
 
 Run this command before using any other secrets functionality.`,
-			string(secrets.EncryptedType), string(secrets.OnePasswordType), string(secrets.EnvironmentType)), //nolint:gofmt,gci
+			string(secrets.EncryptedType), string(secrets.OnePasswordType),
+			string(secrets.EnvironmentType), string(secrets.BitwardenType)),
 		Args: cobra.NoArgs,
 		RunE: runSecretsSetup,
 	}
@@ -261,7 +267,7 @@ If your provider is read-only or doesn't support deletion, this command returns 
 				if !provider.Capabilities().CanDelete {
 					configProvider := config.NewDefaultProvider()
 					cfg := configProvider.GetConfig()
-					providerType, _ := cfg.Secrets.GetProviderType()
+					providerType, _ := cfg.Secrets.GetSystemProviderType()
 					return fmt.Errorf("the %s secrets provider does not support deleting secrets", providerType)
 				}
 				// Workload configs reference the bare (unscoped) name, so strip
@@ -323,7 +329,7 @@ If descriptions exist for the secrets, the command displays them alongside the n
 				if !provider.Capabilities().CanList {
 					configProvider := config.NewDefaultProvider()
 					cfg := configProvider.GetConfig()
-					providerType, _ := cfg.Secrets.GetProviderType()
+					providerType, _ := cfg.Secrets.GetSystemProviderType()
 					return fmt.Errorf("the %s secrets provider does not support listing secrets", providerType)
 				}
 				return runSystemSecretList(ctx, provider, os.Stdout)
@@ -384,7 +390,7 @@ upgraded file. Stop or upgrade all local ToolHive processes before continuing.`,
 		Args: cobra.NoArgs,
 		PreRunE: func(_ *cobra.Command, _ []string) error {
 			cfg := config.NewDefaultProvider().GetConfig()
-			providerType, err := cfg.Secrets.GetProviderType()
+			providerType, err := cfg.Secrets.GetSystemProviderType()
 			if err != nil {
 				return fmt.Errorf("failed to get secrets provider type: %w", err)
 			}
@@ -460,12 +466,15 @@ Please select a secrets provider:
   %s - Store secrets in an encrypted file (full read/write)
   %s - Use 1Password for secrets (read-only, requires service account)
   %s - Read secrets from environment variables
-`, string(secrets.EncryptedType), string(secrets.OnePasswordType), string(secrets.EnvironmentType))
+  %s - Read Bitwarden secrets; keep OAuth encrypted locally
+`, string(secrets.EncryptedType), string(secrets.OnePasswordType),
+		string(secrets.EnvironmentType), string(secrets.BitwardenType))
 
 	var providerType secrets.ProviderType
 	for {
-		fmt.Printf("\nEnter provider (%s/%s/%s): ",
-			string(secrets.EncryptedType), string(secrets.OnePasswordType), string(secrets.EnvironmentType))
+		fmt.Printf("\nEnter provider (%s/%s/%s/%s): ",
+			string(secrets.EncryptedType), string(secrets.OnePasswordType),
+			string(secrets.EnvironmentType), string(secrets.BitwardenType))
 		input, err := reader.ReadString('\n')
 		if err != nil {
 			return fmt.Errorf("failed to read input: %w", err)
@@ -479,9 +488,12 @@ Please select a secrets provider:
 			providerType = secrets.OnePasswordType
 		case string(secrets.EnvironmentType):
 			providerType = secrets.EnvironmentType
+		case string(secrets.BitwardenType):
+			providerType = secrets.BitwardenType
 		default:
-			fmt.Printf("Invalid provider. Please enter '%s', '%s', or '%s'.\n",
-				string(secrets.EncryptedType), string(secrets.OnePasswordType), string(secrets.EnvironmentType))
+			fmt.Printf("Invalid provider. Please enter '%s', '%s', '%s', or '%s'.\n",
+				string(secrets.EncryptedType), string(secrets.OnePasswordType),
+				string(secrets.EnvironmentType), string(secrets.BitwardenType))
 			continue
 		}
 		break
@@ -504,6 +516,14 @@ To use 1Password as your secrets provider, you need to:
 3. Set the OP_SERVICE_ACCOUNT_TOKEN environment variable
 
 For more information, visit: https://developer.1password.com/docs/service-accounts/`)
+	case secrets.BitwardenType:
+		fmt.Println(`Setting up Bitwarden Secrets Manager...
+Install the bws CLI and create a read-only machine account.
+Use a saved OS credential or BWS_ACCESS_TOKEN for authentication.
+Use TOOLHIVE_BWS_PATH to select an absolute bws executable path if needed.
+Reference secrets as bws://UUID. OAuth credentials stay in local encrypted storage.
+Background services need access to the same unlocked credential store or BWS_ACCESS_TOKEN,
+and the bws executable available in their own environment.`)
 	case secrets.EnvironmentType:
 		fmt.Println(`Setting up environment variable secrets provider...
 	Secrets will be read from environment variables with the TOOLHIVE_SECRET_ prefix.
@@ -512,7 +532,14 @@ For more information, visit: https://developer.1password.com/docs/service-accoun
 
 	// SetSecretsProvider will handle validation and configuration
 	fmt.Println("Validating provider setup...")
-	if err := SetSecretsProvider(cmd.Context(), providerType); err != nil {
+	err := SetSecretsProvider(cmd.Context(), providerType)
+	if errors.Is(err, secrets.ErrBitwardenTokenNotFound) {
+		if err := loginBitwarden(cmd, false); err != nil {
+			return err
+		}
+		err = SetSecretsProvider(cmd.Context(), providerType)
+	}
+	if err != nil {
 		return fmt.Errorf("failed to configure secrets provider: %w", err)
 	}
 
