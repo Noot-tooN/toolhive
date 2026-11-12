@@ -166,6 +166,23 @@ tasks:
     cmds:
       - go test -v -race {{.DIR_LIST | catLines}}
 
+  test-remote-auth:
+    desc: Test remote authentication recovery with race detection
+    platforms: [linux, darwin]
+    cmds:
+      - cmd: GODEBUG=gotestjsonbuildtext=1 go test -race ./pkg/auth/remote
+        platforms: [linux]
+      - cmd: GODEBUG=gotestjsonbuildtext=1 go test -ldflags=-extldflags=-Wl,-w -race ./pkg/auth/remote
+        platforms: [darwin]
+
+  test-workloads:
+    desc: Test workload lifecycle and remote status reporting with race detection
+    cmds:
+      - cmd: go test -race ./pkg/workloads
+        platforms: [linux]
+      - cmd: go test -ldflags=-extldflags=-Wl,-w -race ./pkg/workloads
+        platforms: [darwin]
+
   test:
     desc: Run unit tests (excluding e2e tests)
     deps: [gen]
@@ -243,6 +260,16 @@ tasks:
       THV_BINARY: "{{.ROOT_DIR}}\\bin\\thv.exe"
     cmds:
       - cmd: .\\test\\e2e\\run_tests.bat
+
+  test-e2e-noninteractive-auth:
+    desc: Test detached noninteractive OAuth recovery without real credentials
+    deps: [build]
+    platforms: [linux, darwin]
+    env:
+      THV_BINARY: "{{.ROOT_DIR}}/bin/thv"
+      TOOLHIVE_DEV: "true"
+    cmds:
+      - go run github.com/onsi/ginkgo/v2/ginkgo --label-filter=noninteractive-auth --procs=1 --timeout=2m --fail-on-empty --silence-skips ./test/e2e
 
   test-e2e-podman-native:
     desc: Run opt-in native rootless Podman isolation regressions (no cleanup sweep)

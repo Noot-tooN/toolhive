@@ -1855,6 +1855,7 @@ func (d *DefaultManager) getRemoteWorkloadsFromState(
 			Name:          name,
 			Package:       "remote",
 			Status:        workloadStatus.Status,
+			StatusContext: workloadStatus.StatusContext,
 			URL:           proxyURL,
 			Port:          runConfig.Port,
 			TransportType: transportType,

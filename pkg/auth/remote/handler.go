@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +20,10 @@ import (
 	"github.com/stacklok/toolhive/pkg/oauthproto"
 	"github.com/stacklok/toolhive/pkg/secrets"
 )
+
+// NonInteractiveEnvVarName disables fresh OAuth authorization during unattended
+// recovery. It is inherited by detached workloads and never saved in runconfig.
+const NonInteractiveEnvVarName = "TOOLHIVE_REMOTE_AUTH_NONINTERACTIVE"
 
 // Handler handles authentication for remote MCP servers.
 // Supports OAuth/OIDC-based authentication with automatic discovery.
@@ -60,6 +66,11 @@ func (h *Handler) SetHTTPClient(client networking.HTTPClient) {
 
 // Authenticate is the main entry point for remote MCP server authentication
 func (h *Handler) Authenticate(ctx context.Context, remoteURL string) (oauth2.TokenSource, error) {
+	nonInteractive, err := nonInteractiveAuthentication()
+	if err != nil {
+		return nil, err
+	}
+
 	// Priority 1: Bearer token authentication (if configured)
 	bearerToken := h.config.bearerToken()
 	if bearerToken != "" {
@@ -102,12 +113,20 @@ func (h *Handler) Authenticate(ctx context.Context, remoteURL string) (oauth2.To
 	if h.config.HasValidCachedTokens() {
 		tokenSource, err := h.tryRestoreFromCachedTokens(ctx, issuer, scopes, authServerInfo)
 		if err != nil {
+			if nonInteractive {
+				// Retain the session references for a later retry or manual login.
+				// Provider errors can contain response bodies, so do not expose them.
+				return nil, errors.New("non-interactive authentication could not restore the saved session; retry manually with thv restart")
+			}
 			slog.Warn("Failed to restore from cached tokens, will perform fresh OAuth flow", "error", err)
 			h.clearCachedSessionMetadata()
 		} else if tokenSource != nil {
 			slog.Debug("Successfully restored OAuth session from cached tokens")
 			return tokenSource, nil
 		}
+	}
+	if nonInteractive {
+		return nil, errors.New("non-interactive authentication requires a saved session; run thv restart manually to authorize")
 	}
 
 	// Priority 3: Fresh OAuth authentication flow. Reuse the same target-private
@@ -117,6 +136,18 @@ func (h *Handler) Authenticate(ctx context.Context, remoteURL string) (oauth2.To
 	// (CWE-918) — without a second, later TargetIsPrivate DNS lookup that could
 	// disagree with the first.
 	return h.performOAuthFlow(ctx, issuer, scopes, authServerInfo, allowPrivateIPs)
+}
+
+func nonInteractiveAuthentication() (bool, error) {
+	value := os.Getenv(NonInteractiveEnvVarName)
+	if value == "" {
+		return false, nil
+	}
+	enabled, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean", NonInteractiveEnvVarName)
+	}
+	return enabled, nil
 }
 
 // validateBearerRequirement checks if Bearer auth is required without OAuth fallback

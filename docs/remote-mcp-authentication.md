@@ -60,6 +60,30 @@ ToolHive implements BOTH discovery mechanisms required by the MCP specification:
 
 ## Authentication Flow
 
+### Unattended recovery
+
+Use `thv restart <name> --non-interactive` when a supervisor retries a remote
+workload. It restores existing credentials and refreshes cached OAuth tokens,
+but stops before fresh authorization if restoration fails or no session exists.
+It does not open a browser, start an authorization callback listener, or print
+an authorization URL. Failed restoration does not clear cached session references.
+Successful refresh-token rotation and client-secret renewal retain their normal
+persistence behavior.
+
+The flag sets `TOOLHIVE_REMOTE_AUTH_NONINTERACTIVE=true` for the invocation and
+its detached child. This policy is not saved in the workload configuration, so
+a later manual `thv restart <name>` can authorize normally. The environment
+variable also accepts Go boolean values (`true`/`false`, `1`/`0`); invalid values
+fail rather than enabling interactive authorization. `--remote-auth-skip-browser`
+is different: it still starts an interactive flow and waits for browser consent.
+
+Detached launch success only means the process was started. Supervisors must
+check workload status and a live MCP request before declaring recovery, bound
+retry frequency, and notify the user when automatic restoration fails.
+`thv list --all --format json` includes the remote workload's `status_context`
+alongside its status, including the non-interactive authentication failure
+reason, so supervisors can distinguish it from unrelated startup errors.
+
 ### Initial Detection
 When ToolHive connects to a remote MCP server ([`pkg/auth/remote/handler.go`](../pkg/auth/remote/handler.go)):
 
