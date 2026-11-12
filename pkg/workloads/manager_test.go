@@ -2290,6 +2290,45 @@ func TestGetRemoteWorkloadsFromState_AuthRetryingVisibleWithoutAll(t *testing.T)
 		"remote workload in Unauthenticated should remain hidden in default thv list (listAll=false)")
 }
 
+//nolint:paralleltest // t.Setenv and xdg.Reload mutate process-global configuration.
+func TestGetRemoteWorkloadsFromState_PreservesFailureContext(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	xdg.Reload()
+	t.Cleanup(xdg.Reload)
+	ctx := context.Background()
+	for _, status := range []runtime.WorkloadStatus{
+		runtime.WorkloadStatusUnauthenticated, runtime.WorkloadStatusError,
+	} {
+		name := "remote-" + string(status)
+		runConfig := &runner.RunConfig{
+			SchemaVersion: runner.CurrentSchemaVersion,
+			Name:          name, BaseName: name, RemoteURL: "http://example.com/mcp",
+			Transport: types.TransportTypeStreamableHTTP, Group: "default",
+		}
+		require.NoError(t, runConfig.SaveState(ctx))
+	}
+
+	ctrl := gomock.NewController(t)
+	mockStatusMgr := statusMocks.NewMockStatusManager(ctrl)
+	mockStatusMgr.EXPECT().ListWorkloads(gomock.Any(), true, gomock.Any()).Return([]core.Workload{}, nil)
+	for _, status := range []runtime.WorkloadStatus{
+		runtime.WorkloadStatusUnauthenticated, runtime.WorkloadStatusError,
+	} {
+		name := "remote-" + string(status)
+		mockStatusMgr.EXPECT().GetWorkload(gomock.Any(), name).Return(core.Workload{
+			Name: name, Status: status, StatusContext: "non-interactive authentication requires a saved session",
+		}, nil)
+	}
+	manager := &DefaultManager{statuses: mockStatusMgr}
+	result, err := manager.ListWorkloads(ctx, true)
+	require.NoError(t, err)
+	require.Len(t, result, 2)
+	for _, workload := range result {
+		assert.Equal(t, "non-interactive authentication requires a saved session", workload.StatusContext,
+			"list --all must expose the diagnostic for remote workload %s", workload.Name)
+	}
+}
+
 // startKillableProcess starts a real, long-lived child process and returns its
 // PID. The process is killed and reaped on test cleanup. It is used to exercise
 // the path where stopProcess finds a valid PID and KillProcess succeeds. The

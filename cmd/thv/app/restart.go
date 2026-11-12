@@ -5,18 +5,22 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/stacklok/toolhive/pkg/auth/remote"
 	"github.com/stacklok/toolhive/pkg/groups"
 	"github.com/stacklok/toolhive/pkg/workloads"
 )
 
 var (
-	restartAll        bool
-	restartGroup      string
-	restartForeground bool
+	restartAll            bool
+	restartGroup          string
+	restartForeground     bool
+	restartNonInteractive bool
 )
 
 var restartCmd = &cobra.Command{
@@ -37,6 +41,8 @@ func init() {
 	restartCmd.Flags().BoolVarP(&restartForeground, "foreground", "f", false, "Run the restarted workload in foreground mode"+
 		" (default false)")
 	AddGroupFlag(restartCmd, &restartGroup, true)
+	restartCmd.Flags().BoolVar(&restartNonInteractive, "non-interactive", false,
+		"Restore saved remote credentials without starting a browser authorization flow")
 
 	// Mark the flags as mutually exclusive
 	restartCmd.MarkFlagsMutuallyExclusive("all", "group")
@@ -44,7 +50,7 @@ func init() {
 	restartCmd.PreRunE = validateGroupFlag()
 }
 
-func restartCmdFunc(cmd *cobra.Command, args []string) error {
+func restartCmdFunc(cmd *cobra.Command, args []string) (result error) {
 	ctx := cmd.Context()
 
 	// Validate arguments - check mutual exclusivity with positional arguments
@@ -59,6 +65,22 @@ func restartCmdFunc(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf(
 			"must specify either --all flag, --group flag, or workload name. " +
 				"Hint: use 'thv list' to see available workloads")
+	}
+
+	if restartNonInteractive {
+		// The detached child inherits this policy; saving it in the workload
+		// config would also disable the user's later manual authorization.
+		previous, existed := os.LookupEnv(remote.NonInteractiveEnvVarName)
+		if err := os.Setenv(remote.NonInteractiveEnvVarName, "true"); err != nil {
+			return fmt.Errorf("set non-interactive authentication policy: %w", err)
+		}
+		defer func() {
+			if existed {
+				result = errors.Join(result, os.Setenv(remote.NonInteractiveEnvVarName, previous))
+			} else {
+				result = errors.Join(result, os.Unsetenv(remote.NonInteractiveEnvVarName))
+			}
+		}()
 	}
 
 	// Create workload managers.
@@ -150,7 +172,7 @@ func restartMultipleWorkloads(
 ) error {
 	restartedCount := 0
 	failedCount := 0
-	var errors []string
+	var failureMessages []string
 
 	var restartRequests []workloads.CompletionFunc
 	// First, trigger the restarts concurrently.
@@ -160,7 +182,7 @@ func restartMultipleWorkloads(
 		if err != nil {
 			fmt.Printf(" failed: %v\n", err)
 			failedCount++
-			errors = append(errors, fmt.Sprintf("%s: %v", workloadName, err))
+			failureMessages = append(failureMessages, fmt.Sprintf("%s: %v", workloadName, err))
 		} else {
 			// If it didn't fail during the synchronous part of the operation,
 			// append to the list of restart requests in flight.
@@ -175,7 +197,7 @@ func restartMultipleWorkloads(
 			fmt.Printf(" failed: %v\n", err)
 			failedCount++
 			// Unfortunately we don't have the workload name here, so we just log a generic error.
-			errors = append(errors, fmt.Sprintf("Error restarting workload: %v", err))
+			failureMessages = append(failureMessages, fmt.Sprintf("Error restarting workload: %v", err))
 		} else {
 			restartedCount++
 		}
@@ -186,7 +208,7 @@ func restartMultipleWorkloads(
 
 	if failedCount > 0 {
 		fmt.Println("\nFailed restarts:")
-		for _, errMsg := range errors {
+		for _, errMsg := range failureMessages {
 			fmt.Printf("  - %s\n", errMsg)
 		}
 		return fmt.Errorf("%d workload(s) failed to restart", failedCount)
