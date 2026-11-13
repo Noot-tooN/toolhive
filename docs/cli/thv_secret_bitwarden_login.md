@@ -32,16 +32,17 @@ thv secret bitwarden login [flags]
 ### Options
 
 ```
-  -h, --help          help for login
-      --token-stdin   Read the access token from stdin instead of a hidden terminal prompt
+  -h, --help[=true|false]          help for login
+      --token-stdin[=true|false]   Read the access token from stdin instead of a hidden terminal prompt
 ```
 
 ### Options inherited from parent commands
 
 ```
-      --debug   Enable debug mode
+      --debug[=true|false]   Enable debug mode
 ```
 
 ### SEE ALSO
 
 * [thv secret bitwarden](thv_secret_bitwarden.md)	 - Manage the local Bitwarden access token
+

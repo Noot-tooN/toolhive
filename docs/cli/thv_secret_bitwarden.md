@@ -23,13 +23,13 @@ BWS_ACCESS_TOKEN, when set, overrides the saved credential.
 ### Options
 
 ```
-  -h, --help   help for bitwarden
+  -h, --help[=true|false]   help for bitwarden
 ```
 
 ### Options inherited from parent commands
 
 ```
-      --debug   Enable debug mode
+      --debug[=true|false]   Enable debug mode
 ```
 
 ### SEE ALSO
@@ -37,3 +37,4 @@ BWS_ACCESS_TOKEN, when set, overrides the saved credential.
 * [thv secret](thv_secret.md)	 - Manage secrets
 * [thv secret bitwarden login](thv_secret_bitwarden_login.md)	 - Save a Bitwarden access token in the OS credential store
 * [thv secret bitwarden logout](thv_secret_bitwarden_logout.md)	 - Remove the saved Bitwarden access token
+

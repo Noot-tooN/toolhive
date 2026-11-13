@@ -29,7 +29,7 @@ thv start [workload-name] [flags]
 ```
   -a, --all[=true|false]               Restart all MCP servers
   -f, --foreground[=true|false]        Run the restarted workload in foreground mode (default false)
-  -g, --group string                  Filter by group
+  -g, --group string                   Filter by group
   -h, --help[=true|false]              help for start
       --non-interactive[=true|false]   Restore saved remote credentials without starting a browser authorization flow
 ```

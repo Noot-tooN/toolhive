@@ -27,15 +27,16 @@ thv secret bitwarden logout [flags]
 ### Options
 
 ```
-  -h, --help   help for logout
+  -h, --help[=true|false]   help for logout
 ```
 
 ### Options inherited from parent commands
 
 ```
-      --debug   Enable debug mode
+      --debug[=true|false]   Enable debug mode
 ```
 
 ### SEE ALSO
 
 * [thv secret bitwarden](thv_secret_bitwarden.md)	 - Manage the local Bitwarden access token
+
